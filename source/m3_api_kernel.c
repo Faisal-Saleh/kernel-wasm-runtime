@@ -8,7 +8,6 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "m3_api_kernel.h"
-// #include "rtt_config.h"
 
 #include "m3_exception.h"
 
