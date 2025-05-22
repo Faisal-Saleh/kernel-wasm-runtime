@@ -53,20 +53,39 @@ expected_output="Report: The probed function was called 0 times"
 
 check_output "$expected_output" "$actual_output"
 
+sudo ./wasm_manager deactivate 1 > /dev/null 2>&1
+
 mkdir /tmp/wasm_test1
 mkdir /tmp/wasm_test2
 
 sudo ./wasm_manager report 1 > /tmp/wasm_reports/report_output.log
 actual_output=$(tail -n 1 /tmp/wasm_reports/report_output.log)
-expected_output="Report: The probed function was called 2 times"
+expected_output="Report: The probed function was called 0 times"
 
 check_output "$expected_output" "$actual_output"
+
+sudo ./wasm_manager activate 1 > /dev/null 2>&1
+
+mkdir /tmp/wasm_test3
+mkdir /tmp/wasm_test4
+mkdir /tmp/wasm_test5
+
+sudo ./wasm_manager report 1 > /tmp/wasm_reports/report_output.log
+actual_output=$(tail -n 1 /tmp/wasm_reports/report_output.log)
+expected_output="Report: The probed function was called 3 times"
+
+check_output "$expected_output" "$actual_output"
+
+
 
 # clean up
 sudo rmmod kernel_wasm
 rm -rf /tmp/wasm_reports
 rm -rf /tmp/wasm_test1
 rm -rf /tmp/wasm_test2
+rm -rf /tmp/wasm_test3
+rm -rf /tmp/wasm_test4
+rm -rf /tmp/wasm_test5
 
 echo
 echo "====================="
