@@ -38,10 +38,7 @@
 
 //Create two threads
 // - input thread:  waiting for message from user space
-// - interp thread: execute wasm bytecode from user space
-//       interp waiting for input in a wait queue
 struct task_struct* input_thread;
-struct task_struct* interp_thread;
 
 int comp;
 wait_queue_head_t wq;
@@ -293,19 +290,6 @@ static int setup_wasm(void) {
 
 static int pre_handler(struct kprobe* p, struct pt_regs* regs) {
     M3Result result = m3Err_none;
-
-
-    // struct inode *dir = (struct inode *)regs->si;
-    // struct dentry *dentry = (struct dentry *)regs->dx;
-    // umode_t mode = (umode_t)regs->cx;
-
-    // if (dentry && dentry->d_name.name) {
-    //     pr_info("wasm-kernel: vfs_mkdir dentry name = %s, mode = %o\n",
-    //             dentry->d_name.name, mode);
-    // } else {
-    //     pr_info("wasm-kernel: dentry is null\n");
-    // }
-    // return 0;
     
     int failed = -1;
     for (int i = 0; i < MAX_PROBES; i++) {

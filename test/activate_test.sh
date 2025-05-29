@@ -49,7 +49,7 @@ sudo ./wasm_manager report 1 > /tmp/wasm_reports/report_output.log
 
 actual_output=$(tail -n 1 /tmp/wasm_reports/report_output.log)
 
-expected_output="Report: The probed function was called 0 times"
+expected_output="Report: mkdir was called 0 times"
 
 check_output "$expected_output" "$actual_output"
 
@@ -60,7 +60,7 @@ mkdir /tmp/wasm_test2
 
 sudo ./wasm_manager report 1 > /tmp/wasm_reports/report_output.log
 actual_output=$(tail -n 1 /tmp/wasm_reports/report_output.log)
-expected_output="Report: The probed function was called 0 times"
+expected_output="Report: mkdir was called 0 times"
 
 check_output "$expected_output" "$actual_output"
 
@@ -72,7 +72,7 @@ mkdir /tmp/wasm_test5
 
 sudo ./wasm_manager report 1 > /tmp/wasm_reports/report_output.log
 actual_output=$(tail -n 1 /tmp/wasm_reports/report_output.log)
-expected_output="Report: The probed function was called 3 times"
+expected_output="Report: mkdir was called 3 times"
 
 check_output "$expected_output" "$actual_output"
 

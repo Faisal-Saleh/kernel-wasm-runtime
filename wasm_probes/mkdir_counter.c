@@ -8,7 +8,7 @@ void pre() {
 
 void format_report(char *buffer, int count) {
     // Write the static prefix
-    const char *prefix = "The probed function was called ";
+    const char *prefix = "mkdir was called ";
     const char *suffix = " times\n";
 
     char *ptr = buffer;
