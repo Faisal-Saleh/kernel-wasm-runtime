@@ -60,7 +60,7 @@ unsigned char* read_wasm_file(const char* filename, size_t* size) {
 }
 
 // we get the wasm binary by compiling our file with:
-// clang --target=wasm32 -nostdlib -Wl,--no-entry -Wl,--export-all -o execution_counter.wasm execution_counter.c
+// clang --target=wasm32 -nostdlib -Wl,--no-entry -Wl,--export-all, -Wl,--global-base=1024 -o mkdir_counter.wasm mkdir_counter.c 
 int main(int argc, char *argv[]) {
     int fd = open(DEVICE_PATH, O_RDWR);
     if (fd < 0) {
