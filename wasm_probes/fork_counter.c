@@ -10,4 +10,5 @@ void post() {}
 
 int report() {
     return counter;
+    printf("we are returning\n");
 }

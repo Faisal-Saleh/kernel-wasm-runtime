@@ -3,12 +3,12 @@
 unsigned int mode = 0;
 char buffer[128];
 
-__attribute__((export_name("kprobe:vfs_mkdir:pre")))
+__attribute__((export_name("kprobe:__x64_sys_mkdir:pre")))
 void func1() {
-    mode = get_cx();
+    mode = get_si();
 }
 
-__attribute__((export_name("kprobe:vfs_mkdir:post")))
+__attribute__((export_name("kprobe:__x64_sys_mkdir:post")))
 void post() {}
 
 void format_report(char *buffer, int count) {
