@@ -20,6 +20,7 @@
 #include <linux/completion.h>
 #include <linux/err.h> /* for IS_ERR() */
 #include <linux/kthread.h>
+#include <linux/spinlock.h>
 #include <linux/version.h>
 #include <linux/sched.h>
 
@@ -42,6 +43,16 @@ struct task_struct* input_thread;
 
 int comp;
 wait_queue_head_t wq;
+
+/**
+ * @todo maybe more efficient to use RCU, but deeeep.
+ * @brief we are using a spinlock because it would be very dangerous to
+ *        use a mutex and then sleep in the middle of the kernel module.
+ *        in addition to that whenever we spin we disable preemption and interrupts
+ *        to guarantee that the critical section is not interrupted (danger).
+ * 
+ */
+static spinlock_t probe_table_lock;
 
 static struct kprobe_map_entry* lookup_kprobe_entry(const char* symbol) {
     u32 key = jhash(symbol, strlen(symbol), 0);
@@ -107,13 +118,17 @@ static void remove_kprobe_entry(const char* symbol) {
 }
 
 static int add_probe_to_table(struct probe_entry* entry) {
+    unsigned long flags;
+    spin_lock_irqsave(&probe_table_lock, flags);
     for (int i = 0; i < MAX_PROBES; i++) {
         if (probe_table[i] == NULL) {
             probe_table[i] = entry;
             pr_info("Added probe entry for symbol %s\n", entry->symbol_name);
+            spin_unlock_irqrestore(&probe_table_lock, flags);
             return 0;
         }
     }
+    spin_unlock_irqrestore(&probe_table_lock, flags);
     pr_err("Probe table full!\n");
     return -ENOMEM;
 }
@@ -256,16 +271,6 @@ static int setup_wasm(void) {
         return -1;
     }
     
-    pr_info("wasm-kernel: loaded the module\n");
-    // Link module
-    result = m3_LinkKernel(module);
-    if (result) {
-        pr_info("wasm-kernel: Could not link imported functions: %s", result);
-        kfree(mod);
-        return -1;
-    }
-    pr_info("wasm-kernel: linked the module\n");
-    
     result = search_exports(module, mod);
     if (result) {
         pr_info("wasm-kernel: Could not register the kprobe\n", result);
@@ -288,10 +293,23 @@ static int setup_wasm(void) {
 }
 
 
+//  /sys/kernel/debug/tracing/events/syscalls/sys_enter_mkdir/format
+/**
+ * @note This can be optimized further in the future by using the hash map
+ *       implementation provided in this file.
+ *       In the future we also want to consider the possibility jumping directly
+ *       to the wasm function, much faster and low overhead.
+ * 
+ * @param p 
+ * @param regs 
+ * @return int 
+ */
 static int pre_handler(struct kprobe* p, struct pt_regs* regs) {
     M3Result result = m3Err_none;
     
     int failed = -1;
+    unsigned long flags;
+    spin_lock_irqsave(&probe_table_lock, flags);
     for (int i = 0; i < MAX_PROBES; i++) {
         if (!probe_table[i] || !probe_table[i]->wasm_pre_func) continue;
         // pr_info("comparing %s with %s\n", p->symbol_name, probe_table[i]->symbol_name);
@@ -304,24 +322,26 @@ static int pre_handler(struct kprobe* p, struct pt_regs* regs) {
             uint8_t* wasm_mem = m3_GetMemory(probe_table[i]->owner->runtime, NULL, 0);
             if (!wasm_mem) {
                 pr_info("wasm-kernel: failed to get wasm memory\n");
-                return 0;
+                spin_unlock_irqrestore(&probe_table_lock, flags);
+                return -1;
             }
-
-            memcpy(wasm_mem, regs, sizeof(struct pt_regs));
-
+            
+            memcpy(wasm_mem, regs->di, sizeof(struct pt_regs));
+            
             result = m3_CallV(probe_table[i]->wasm_pre_func);
             if (result) {
                 pr_info("wasm-kernel: Function call failed: %s\n", result);
                 continue;
             }
-        
+            
             pr_info("wasm-kernel: Wasm function executed successfully before kprobe!\n");
             failed = 0; // executed one wasm function successfully
         }
     }
-
+    
+    spin_unlock_irqrestore(&probe_table_lock, flags);
     if (failed) {
-        pr_info("No probe found, should be unregistered(?)\n");
+        pr_info("Pre: No probe found, should be unregistered(?)\n");
     }
     return failed;
 }
@@ -329,18 +349,21 @@ static int pre_handler(struct kprobe* p, struct pt_regs* regs) {
 static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long flags) {
     M3Result result = m3Err_none;
     
+    unsigned long irq_flags;
+    spin_lock_irqsave(&probe_table_lock, irq_flags);
     for (int i = 0; i < MAX_PROBES; i++) {
         if (!probe_table[i] || !probe_table[i]->wasm_post_func) continue;
         if (!strcmp(p->symbol_name, probe_table[i]->symbol_name)) {
             if (!is_active(probe_table[i]->id)) continue; // maybe another module has the symbol name active(?)
-
+            
             uint8_t* wasm_mem = m3_GetMemory(probe_table[i]->owner->runtime, NULL, 0);
             if (!wasm_mem) {
                 pr_info("wasm-kernel: failed to get wasm memory\n");
-                continue;
+                spin_unlock_irqrestore(&probe_table_lock, irq_flags);
+                return;
             }
-
-            memcpy(wasm_mem, regs, sizeof(struct pt_regs));
+            
+            memcpy(wasm_mem, regs->di, sizeof(struct pt_regs));
             
             result = m3_CallV(probe_table[i]->wasm_post_func);
             if (result) {
@@ -352,7 +375,8 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
             continue;
         }
     }
-    pr_info("No probe found, should be unregistered(?)\n");
+    spin_unlock_irqrestore(&probe_table_lock, irq_flags);
+    pr_info("Post: No probe found, should be unregistered(?)\n");
 }
 
 static void report() {
@@ -392,7 +416,7 @@ static void report() {
             pr_info("wasm-kernel: returning successfully from report with %d\n", strlen(buffer));
         }
     }
-    pr_info("No probe found, should be unregistered(?)\n");
+    pr_info("Report: No probe found, should be unregistered(?)\n");
 }
 
 
@@ -458,7 +482,9 @@ static int __init wasm_module_init(void) {
     if (ret) {
         pr_info("wasm-kernel: char device init error!\n");
         return ret;
-    } 
+    }
+
+    spin_lock_init(&probe_table_lock);
 
     init_waitqueue_head(&wq);
     comp = WAITING;
@@ -501,7 +527,6 @@ static void __exit wasm_module_exit(void) {
             probe_table[i] = NULL;
         }
     }
-
     pr_info("wasm-kernel: Exiting Wasm Kernel Module\n");
 }
 
