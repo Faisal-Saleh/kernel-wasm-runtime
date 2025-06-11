@@ -56,4 +56,8 @@ static inline unsigned long get_di() {
     return *(unsigned long *)(112);
 }
 
+static inline unsigned long get_orig_ax() {
+    return *(unsigned long *)(120);
+}
+
 #endif
