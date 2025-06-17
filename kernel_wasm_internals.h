@@ -46,6 +46,7 @@ struct module_entry {
     int id;
     IM3Environment env;
     IM3Runtime runtime;
+    IM3Module module;
     IM3Function wasm_report_func;
 };
 

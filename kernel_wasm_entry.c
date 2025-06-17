@@ -27,6 +27,7 @@
 #include <linux/jhash.h>
 
 #include <linux/string.h>
+#include <linux/uaccess.h>
 
 
 #include "source/wasm3.h"
@@ -217,11 +218,11 @@ void attach_function(const char* f_name, struct module_entry* mod) {
     pr_info("the position is %s\n", position);
 }
 
-int search_exports(IM3Module io_module, struct module_entry* module) {
+int search_exports(struct module_entry* module) {
     // Search exports
-    pr_info("the number of exports is %d\n", io_module->numFunctions);
-    for (u32 i = 0; i < io_module->numFunctions; i++) {
-        const char* f_name = m3_GetFunctionName(Module_GetFunction(io_module, i));
+    pr_info("the number of exports is %d\n", module->module->numFunctions);
+    for (u32 i = 0; i < module->module->numFunctions; i++) {
+        const char* f_name = m3_GetFunctionName(Module_GetFunction(module->module, i));
         pr_info("the function found is %s\n", f_name);
         
         if (!strcmp(f_name, INVOKED_REPORT)) {
@@ -248,14 +249,13 @@ static int setup_wasm(void) {
 
     mod->env = m3_NewEnvironment();
     mod->runtime = m3_NewRuntime(mod->env, 64 * 1024, NULL);
-    IM3Module module;
 
     pr_info("wasm-kernel: Setting up the wasm runtime\n");
     mod->id = get_cur_id();
     
     pr_info("wasm-kernel: the binary size is: %d\n", get_binary_size(mod->id));
     // Load Wasm binary
-    result = m3_ParseModule(mod->env, &module, get_binary(mod->id), get_binary_size(mod->id));
+    result = m3_ParseModule(mod->env, &(mod->module), get_binary(mod->id), get_binary_size(mod->id));
     if (result) {
         pr_info("wasm-kernel: Wasm module parse failed: %s\n", result);
         kfree(mod);
@@ -264,14 +264,14 @@ static int setup_wasm(void) {
     
     pr_info("wasm-kernel: parsed the module\n");
     // Load module
-    result = m3_LoadModule(mod->runtime, module);
+    result = m3_LoadModule(mod->runtime, mod->module);
     if (result) {
         pr_info("wasm-kernel: Wasm module load failed: %s\n", result);
         kfree(mod);
         return -1;
     }
     
-    result = search_exports(module, mod);
+    result = search_exports(mod);
     if (result) {
         pr_info("wasm-kernel: Could not register the kprobe\n", result);
         // I need to free all the probe_entries and kprobe_maps created in this step
@@ -319,16 +319,50 @@ static int pre_handler(struct kprobe* p, struct pt_regs* regs) {
                 continue;
             }
 
+            pr_info("probe_table[%d] = %p, owner = %p, module = %p\n",
+                    i,
+                    probe_table[i],
+                    probe_table[i] ? probe_table[i]->owner : NULL,
+                    probe_table[i] && probe_table[i]->owner ? probe_table[i]->owner->module : NULL);
+
+            // Get offset global
+            IM3TaggedValue offset, size;
+            offset = kmalloc(sizeof(struct M3TaggedValue), GFP_KERNEL);
+            size   = kmalloc(sizeof(struct M3TaggedValue), GFP_KERNEL);
+
+            if (!offset || !size) {
+                pr_err("Failed to allocate memory for tagged values\n");
+                spin_unlock_irqrestore(&probe_table_lock, flags);
+                return -ENOMEM;
+            }
+            
+            IM3Global offset_global = m3_FindGlobal(probe_table[i]->owner->module, "buffer");
+            pr_info("accessing the buffer size\n");
+            m3_GetGlobal(offset_global, offset);
+            
+            IM3Global size_global = m3_FindGlobal(probe_table[i]->owner->module, "buffer_size");
+            m3_GetGlobal(size_global, size);
+            
+            pr_info("accessing the wasm memory\n");
             uint8_t* wasm_mem = m3_GetMemory(probe_table[i]->owner->runtime, NULL, 0);
             if (!wasm_mem) {
                 pr_info("wasm-kernel: failed to get wasm memory\n");
                 spin_unlock_irqrestore(&probe_table_lock, flags);
                 return -1;
             }
+
+            pr_info("got the memory and passing the arguments now\n");
             
-            memcpy(wasm_mem, regs->di, sizeof(struct pt_regs));
+            // memcpy(wasm_mem, regs->di->di, sizeof(struct pt_regs));
+            struct pt_regs* syscall_regs = regs->di;
+            const char __user *user_str = (const char __user*)syscall_regs->di;
+            // size_t len = strnlen(user_str, size->value.i32);
             
-            result = m3_CallV(probe_table[i]->wasm_pre_func);
+            copy_from_user(wasm_mem + offset->value.i64, user_str, size->value.i32);
+            
+            pr_info("wasm-kernel: The types are %d, and %d\n", offset->type, size->type);
+
+            result = m3_CallV(probe_table[i]->wasm_pre_func, offset->value.i32, syscall_regs->si);
             if (result) {
                 pr_info("wasm-kernel: Function call failed: %s\n", result);
                 continue;
