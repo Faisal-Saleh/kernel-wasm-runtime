@@ -293,7 +293,50 @@ static int setup_wasm(void) {
 }
 
 
-//  /sys/kernel/debug/tracing/events/syscalls/sys_enter_mkdir/format
+static int wasm_call(struct pt_regs* regs, struct module_entry* m_entry, IM3Function wasm_fun) {
+    // Get offset global
+    IM3TaggedValue offset, size;
+    offset = kmalloc(sizeof(struct M3TaggedValue), GFP_KERNEL);
+    size   = kmalloc(sizeof(struct M3TaggedValue), GFP_KERNEL);
+
+    if (!offset || !size) {
+        pr_err("Failed to allocate memory for tagged values\n");
+        return -ENOMEM;
+    }
+    
+    IM3Global offset_global = m3_FindGlobal(m_entry->module, "buffer");
+    pr_info("accessing the buffer size\n");
+    m3_GetGlobal(offset_global, offset);
+    
+    IM3Global size_global = m3_FindGlobal(m_entry->module, "buffer_size");
+    m3_GetGlobal(size_global, size);
+    
+    pr_info("accessing the wasm memory\n");
+    uint8_t* wasm_mem = m3_GetMemory(m_entry->runtime, NULL, 0);
+    if (!wasm_mem) {
+        pr_info("wasm-kernel: failed to get wasm memory\n");
+        return -ENOMEM;
+    }
+
+    pr_info("got the memory and passing the arguments now\n");
+    
+    struct pt_regs* syscall_regs = regs->di;
+    const char __user *user_str = (const char __user*)syscall_regs->di;
+    
+    copy_from_user(wasm_mem + offset->value.i64, user_str, size->value.i32);
+    
+    pr_info("wasm-kernel: The types are %d, and %d\n", offset->type, size->type);
+
+    M3Result result = m3_CallV(wasm_fun, offset->value.i32, syscall_regs->si);
+    if (result) {
+        pr_info("wasm-kernel: Function call failed: %s\n", result);
+        return -1;
+    }
+
+    return 0;
+
+}
+
 /**
  * @note This can be optimized further in the future by using the hash map
  *       implementation provided in this file.
@@ -325,46 +368,12 @@ static int pre_handler(struct kprobe* p, struct pt_regs* regs) {
                     probe_table[i] ? probe_table[i]->owner : NULL,
                     probe_table[i] && probe_table[i]->owner ? probe_table[i]->owner->module : NULL);
 
-            // Get offset global
-            IM3TaggedValue offset, size;
-            offset = kmalloc(sizeof(struct M3TaggedValue), GFP_KERNEL);
-            size   = kmalloc(sizeof(struct M3TaggedValue), GFP_KERNEL);
-
-            if (!offset || !size) {
-                pr_err("Failed to allocate memory for tagged values\n");
-                spin_unlock_irqrestore(&probe_table_lock, flags);
-                return -ENOMEM;
-            }
-            
-            IM3Global offset_global = m3_FindGlobal(probe_table[i]->owner->module, "buffer");
-            pr_info("accessing the buffer size\n");
-            m3_GetGlobal(offset_global, offset);
-            
-            IM3Global size_global = m3_FindGlobal(probe_table[i]->owner->module, "buffer_size");
-            m3_GetGlobal(size_global, size);
-            
-            pr_info("accessing the wasm memory\n");
-            uint8_t* wasm_mem = m3_GetMemory(probe_table[i]->owner->runtime, NULL, 0);
-            if (!wasm_mem) {
-                pr_info("wasm-kernel: failed to get wasm memory\n");
+            int res = wasm_call(regs, probe_table[i]->owner, probe_table[i]->wasm_pre_func); 
+            if (res == -ENOMEM) {
                 spin_unlock_irqrestore(&probe_table_lock, flags);
                 return -1;
             }
-
-            pr_info("got the memory and passing the arguments now\n");
-            
-            // memcpy(wasm_mem, regs->di->di, sizeof(struct pt_regs));
-            struct pt_regs* syscall_regs = regs->di;
-            const char __user *user_str = (const char __user*)syscall_regs->di;
-            // size_t len = strnlen(user_str, size->value.i32);
-            
-            copy_from_user(wasm_mem + offset->value.i64, user_str, size->value.i32);
-            
-            pr_info("wasm-kernel: The types are %d, and %d\n", offset->type, size->type);
-
-            result = m3_CallV(probe_table[i]->wasm_pre_func, offset->value.i32, syscall_regs->si);
-            if (result) {
-                pr_info("wasm-kernel: Function call failed: %s\n", result);
+            if (res < 0) {
                 continue;
             }
             
