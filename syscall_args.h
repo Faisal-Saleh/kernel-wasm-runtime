@@ -21,10 +21,10 @@ typedef enum {
     ARG_UINT,
     ARG_LONG,
     ARG_ULONG,
+    ARG_SIZE_T,
+    ARG_PID_T,
     ARG_STR,
     ARG_PTR,
-    ARG_PID_T,
-    ARG_SIZE_T,
     ARG_POLLFD_PTR
 } arg_type_t;
 
