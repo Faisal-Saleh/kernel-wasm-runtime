@@ -293,16 +293,6 @@ static int setup_wasm(void) {
     return -1;
 }
 
-static int call_void(IM3Function wasm_fun) {
-    M3Result result = m3_CallV(wasm_fun);
-    if (result) {
-        pr_info("wasm-kernel: Function call failed: %s\n", result);
-        return -1;
-    }
-
-    return 0;
-}
-
 int strnlen_wasm(const char __user* str, int n) {
     char* k_str = kmalloc(n, GFP_KERNEL);
     if (k_str) {
@@ -333,6 +323,10 @@ static size_t handle_argument(unsigned long* res, int type, unsigned long reg, u
         const char __user* user_str = (const char __user*)reg;
 
         int size = strnlen_wasm(user_str, max_len - 1);
+        if (size < 0) {
+            pr_info("wasm-kernel: the call to str_length failed\n");
+            return 0;
+        }
         size++; // for the null terminator
         pr_info("wasm-kernel: the size is %d and the start is %d\n", size, buffer_start);
         copy_from_user(wasm_mem + buffer_start, user_str, size);
@@ -344,59 +338,41 @@ static size_t handle_argument(unsigned long* res, int type, unsigned long reg, u
     
 }
 
-static int call_one(struct pt_regs* regs, struct module_entry* m_entry, IM3Function wasm_fun) {
-    int type = syscall_arg_table[regs->orig_ax][0]; 
+static int wasm_call(struct pt_regs* regs, struct module_entry* m_entry, IM3Function wasm_fun) {
+    struct pt_regs* sys_regs = regs->di;
+    size_t syscall_number = sys_regs->orig_ax;
+
+    int num_args = 0;
+    while (syscall_arg_table[syscall_number][num_args] != ARG_UNKNOWN) {
+        num_args++;
+    }
+
     M3Result result;
+    
+    if (!num_args) {
+        result = m3_CallV(wasm_fun);
+        if (result) {
+            pr_info("wasm-kernel: Function call failed: %s\n", result);
+            return -1;
+        }
+        return 0;
+    }
+
     
     // Get offset global
     IM3TaggedValue offset, size;
     offset = kmalloc(sizeof(struct M3TaggedValue), GFP_KERNEL);
     size   = kmalloc(sizeof(struct M3TaggedValue), GFP_KERNEL);
 
-    unsigned long input;
-    
-    if (!offset || !size) {
-        pr_err("Failed to allocate memory for tagged values\n");
-        return -ENOMEM;
-    }
-    
-    IM3Global offset_global = m3_FindGlobal(m_entry->module, "buffer");
-    pr_info("accessing the buffer size\n");
-    m3_GetGlobal(offset_global, offset);
-    
-    IM3Global size_global = m3_FindGlobal(m_entry->module, "buffer_size");
-    m3_GetGlobal(size_global, size);
-    
-    pr_info("accessing the wasm memory\n");
-    uint8_t* wasm_mem = m3_GetMemory(m_entry->runtime, NULL, 0);
-    if (!wasm_mem) {
-        pr_info("wasm-kernel: failed to get wasm memory\n");
-        return -ENOMEM;
-    }
-
-    handle_argument(&input, type, regs->di, wasm_mem, offset->value.i64, size->value.i64);
-    
-    pr_info("wasm-kernel: The types are %d, and %d\n", offset->type, size->type);
-
-    result = m3_CallV(wasm_fun, input);
-    if (result) {
-        pr_info("wasm-kernel: Function call failed: %s\n", result);
-        return -1;
-    }
-    
-    return 0;
-
-}
-
-static int call_two(struct pt_regs* regs, struct module_entry* m_entry, IM3Function wasm_fun) {
-    M3Result result;
-    
-    // Get offset global
-    IM3TaggedValue offset, size;
-    offset = kmalloc(sizeof(struct M3TaggedValue), GFP_KERNEL);
-    size   = kmalloc(sizeof(struct M3TaggedValue), GFP_KERNEL);
-
-    unsigned long input[2];
+    unsigned long input[6];
+    unsigned long args[6] = {
+        sys_regs->di,
+        sys_regs->si,
+        sys_regs->dx,
+        sys_regs->r10,
+        sys_regs->r8,
+        sys_regs->r9
+    };
     
     if (!offset || !size) {
         pr_err("Failed to allocate memory for tagged values\n");
@@ -420,51 +396,47 @@ static int call_two(struct pt_regs* regs, struct module_entry* m_entry, IM3Funct
 
     size_t buffer_start = offset->value.i64;
     size_t max_len = size->value.i64;
-    size_t len = handle_argument(&input[0], syscall_arg_table[regs->orig_ax][0], regs->di, wasm_mem, buffer_start, max_len);
-    if (len) {
-        buffer_start += len;
-        max_len -= len;
+    for (int i = 0; i < num_args; i++) {
+        size_t len = handle_argument(&input[i], syscall_arg_table[sys_regs->orig_ax][i], args[i], wasm_mem, buffer_start, max_len);
+        if (len) {
+            buffer_start += len;
+            max_len -= len;
+        }
     }
-    len = handle_argument(&input[1], syscall_arg_table[regs->orig_ax][1], regs->si, wasm_mem, buffer_start, max_len);
     
     pr_info("wasm-kernel: The types are %d, and %d\n", offset->type, size->type);
 
-    result = m3_CallV(wasm_fun, input[0], input[1]);
+    switch (num_args) {
+    case 1:
+        result = m3_CallV(wasm_fun, input[0]);
+        break;
+    case 2:
+        result = m3_CallV(wasm_fun, input[0], input[1]);
+        break;
+    case 3:
+        result = m3_CallV(wasm_fun, input[0], input[1], input[2]);
+        break;
+    case 4:
+        result = m3_CallV(wasm_fun, input[0], input[1], input[2], input[3]);
+        break;
+    case 5:
+        result = m3_CallV(wasm_fun, input[0], input[1], input[2], input[3], input[4]);
+        break;
+    case 6:
+        result = m3_CallV(wasm_fun, input[0], input[1], input[2], input[3], input[4], input[5]);
+        break;
+
+    default:
+        pr_info("the number of arguments is invalid: %d\n", num_args);
+        return -1;
+    }
+
     if (result) {
         pr_info("wasm-kernel: Function call failed: %s\n", result);
         return -1;
     }
     
     return 0;
-
-}
-
-// static int call_three(struct pt_regs* regs, struct module_entry* m_entry, IM3Function wasm_fun);
-// static int call_four(struct pt_regs* regs, struct module_entry* m_entry, IM3Function wasm_fun);
-// static int call_five(struct pt_regs* regs, struct module_entry* m_entry, IM3Function wasm_fun);
-// static int call_six(struct pt_regs* regs, struct module_entry* m_entry, IM3Function wasm_fun);
-
-static int wasm_call(struct pt_regs* regs, struct module_entry* m_entry, IM3Function wasm_fun) {
-    struct pt_regs* sys_regs = regs->di;
-    size_t syscall_number = sys_regs->orig_ax;
-    if (syscall_arg_table[syscall_number][0] == ARG_UNKNOWN) {
-        return call_void(wasm_fun);
-    } else if (syscall_arg_table[syscall_number][1] == ARG_UNKNOWN) {
-        return call_one(sys_regs, m_entry, wasm_fun);
-    } else if (syscall_arg_table[syscall_number][2] == ARG_UNKNOWN) {
-        return call_two(sys_regs, m_entry, wasm_fun);
-    }
-
-    return -1;
-    
-    // else if (syscall_arg_table[syscall_number][3] == ARG_UNKNOWN) {
-    //     return call_three(sys_regs, m_entry, wasm_fun);
-    // } else if (syscall_arg_table[syscall_number][4] == ARG_UNKNOWN) {
-    //     return call_four(sys_regs, m_entry, wasm_fun);
-    // } else if (syscall_arg_table[syscall_number][5] == ARG_UNKNOWN) {
-    //     return call_five(sys_regs, m_entry, wasm_fun);
-    // }
-    // return call_six(syscall_number, m_entry, wasm_fun);
 }
 
 /**
