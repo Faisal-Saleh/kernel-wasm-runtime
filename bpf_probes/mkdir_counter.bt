@@ -5,6 +5,6 @@ kprobe:__x64_sys_mkdir
     @mkdir_count++;
 }
 
-END {
+interval:s:5 {
     printf("mkdir was called %llu times\n", @mkdir_count);
 }

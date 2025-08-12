@@ -237,6 +237,25 @@ int search_exports(struct module_entry* module) {
         attach_function(f_name, module);
     }
 
+    IM3TaggedValue comm = kmalloc(sizeof(struct M3TaggedValue), GFP_KERNEL);
+    IM3Global comm_global = m3_FindGlobal(module->module, "comm");
+    m3_GetGlobal(comm_global, comm);
+
+    uint8_t* wasm_mem = m3_GetMemory(module->runtime, NULL, 0);
+    if (!wasm_mem) {
+        pr_info("wasm-kernel: failed to get wasm memory\n");
+        return -ENOMEM;
+    }
+
+    int len = strlen(wasm_mem + comm->value.i32);
+    if (len) {
+        module->comm = kmalloc(len + 1, GFP_KERNEL);
+        strncpy(module->comm, wasm_mem + comm->value.i32, len);
+        module->comm[len] = '\0';
+    } else {
+        module->comm = NULL;
+    }
+
     return 0;
 }
 
@@ -464,6 +483,13 @@ static int pre_handler(struct kprobe* p, struct pt_regs* regs) {
                 continue;
             }
 
+            if (probe_table[i]->owner->comm && 
+                strcmp(current->comm, probe_table[i]->owner->comm)) {
+                    failed = 0;
+                    continue;
+            }
+            
+            pr_info("Got syscall from proxy PID=%d UID=%u\n", current->pid, current_uid().val);
             pr_info("probe_table[%d] = %p, owner = %p, module = %p\n",
                     i,
                     probe_table[i],
@@ -507,12 +533,13 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
                 spin_unlock_irqrestore(&probe_table_lock, irq_flags);
                 return;
             }
-            
-            memcpy(wasm_mem, regs->di, sizeof(struct pt_regs));
-            
-            result = m3_CallV(probe_table[i]->wasm_post_func);
-            if (result) {
-                pr_info("wasm-kernel: Function call failed: %s\n", result);
+
+            int res = wasm_call(regs, probe_table[i]->owner, probe_table[i]->wasm_pre_func); 
+            if (res == -ENOMEM) {
+                spin_unlock_irqrestore(&probe_table_lock, flags);
+                return;
+            }
+            if (res < 0) {
                 continue;
             }
             
@@ -521,7 +548,7 @@ static void post_handler(struct kprobe *p, struct pt_regs *regs, unsigned long f
         }
     }
     spin_unlock_irqrestore(&probe_table_lock, irq_flags);
-    pr_info("Post: No probe found, should be unregistered(?)\n");
+    // pr_info("Post: No probe found, should be unregistered(?)\n");
 }
 
 static void report() {

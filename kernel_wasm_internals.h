@@ -44,6 +44,7 @@ struct probe_entry {
 
 struct module_entry {
     int id;
+    char* comm;
     IM3Environment env;
     IM3Runtime runtime;
     IM3Module module;
