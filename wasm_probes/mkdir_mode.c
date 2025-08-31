@@ -1,11 +1,12 @@
-#include "wasm_regs.h"
+__attribute__((used)) char buffer[256];
+__attribute__((used)) char report_buffer[256];
+__attribute__((used)) unsigned int buffer_size = sizeof(buffer);
 
 unsigned int mode = 0;
-char buffer[128];
 
 __attribute__((export_name("kprobe:__x64_sys_mkdir:pre")))
-void func1() {
-    mode = get_si();
+void pre(const char* pathname, unsigned short m) {
+    mode = m;
 }
 
 __attribute__((export_name("kprobe:__x64_sys_mkdir:post")))
