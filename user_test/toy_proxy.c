@@ -1,4 +1,27 @@
-// toy_reverse_proxy_cache.c
+/**
+ * @file toy_proxy.c
+ * @author Faisal Abdelmonem (fts@alumni.cmu.edu)
+ * @brief 
+ * @version 0.1
+ * @date 2025-08-31
+ * 
+ * @copyright Copyright (c) 2025
+ * 
+ * the way we test this is by having four terminals
+ * 1: the kernel module of course (insert the module, then load wasm_probes/connect_counter.wasm)
+ * 2: nc -lk 9000 (server side) 
+ * 3: ./user_test/toyproxy enable/disable (to run the toy proxy)
+ * 4: nc localhost 8080
+ * 
+ * then you can write your messages on the localhost and verify they are
+ * being listned to and echoed on the server (terminal 1).
+ * kill the localhost and the backend server and rerun them again N times
+ * after that you can call report in terminal which will count the number of times connect was called.
+ * when the cache is enabled you should see 1, when it is disabled you should see N.
+ * 
+ * The test case is also available in test/connect_counter_test.sh
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,18 +39,6 @@
 #define BACKEND_IP "127.0.0.1"
 #define MAX_CONN 10
 #define BUFFER_SIZE 4096
-
-// the way we test this is by having four terminals
-// 1: the kernel module of course (insert the module, then load wasm_probes/connect_counter.wasm)
-// 2: nc -lk 9000 (server side)
-// 3: ./user_test/toyproxy enable/disable (to run the toy proxy)
-// 4: nc localhost 8080
-
-// then you can write your messages on the localhost and verify they are
-// being listned to and echoed on the server (terminal 1).
-// kill the localhost and the backend server and rerun them again N times
-// after that you can call report in terminal which will count the number of times connect was called.
-// when the cache is enabled you should see 1, when it is disabled you should see N.
 
 int set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
