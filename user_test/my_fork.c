@@ -1,7 +1,16 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
+#include <sys/prctl.h>
+
 
 int main() {
+
+    if (prctl(PR_SET_NAME, "fork_test", 0, 0, 0) < 0) {
+        perror("prctl(PR_SET_NAME)");
+        exit(1);
+    }
+
     pid_t pid = fork();
 
     if (pid < 0) {

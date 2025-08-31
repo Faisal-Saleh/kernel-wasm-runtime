@@ -1,6 +1,6 @@
 /**
  * @file wasm_user_input.c
- * @author your name (you@domain.com)
+ * @author Faisal Abdelmonem (fts@alumni.cmu.edu)
  * @brief 
  * @version 0.1
  * @date 2025-02-06
