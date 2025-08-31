@@ -5,7 +5,7 @@
 
 
 int main() {
-
+    // there seems to be a bug with this but oh well
     if (prctl(PR_SET_NAME, "fork_test", 0, 0, 0) < 0) {
         perror("prctl(PR_SET_NAME)");
         exit(1);
