@@ -1,8 +1,11 @@
+__attribute__((used)) char buffer[256];
+__attribute__((used)) char report_buffer[256];
+__attribute__((used)) unsigned int buffer_size = sizeof(buffer);
+
 int counter = 0;
-char buffer[128];
 
 __attribute__((export_name("kprobe:__x64_sys_mkdir:pre")))
-void pre() {
+void pre(const char* pathname, unsigned short mode) {
     counter++;
 }
 

@@ -56,6 +56,9 @@ check_output "$expected_output" "$actual_output"
 mkdir /tmp/wasm_test1
 mkdir /tmp/wasm_test2
 
+# There might be a race condition somewhere here, rerun or fix hmm
+sleep 1
+
 sudo ./wasm_manager report 1 > /tmp/wasm_reports/report_output.log
 actual_output=$(tail -n 1 /tmp/wasm_reports/report_output.log)
 expected_output="Report: mkdir was called 2 times"
